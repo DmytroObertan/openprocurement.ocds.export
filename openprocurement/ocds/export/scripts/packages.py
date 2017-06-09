@@ -155,28 +155,74 @@ def run():
         with open(os.path.join(config['path'], name, 'w')) as stream:
             dump(pack, stream)
     else:
-        max_date = _tenders.get_max_date().split('T')[0]
-        total = int(args.number) if args.number else 4096
-        key_ids = fetch_ids(_tenders, total)
-        logger.info('Fetched key doc ids')
-        pool = mp.Pool(mp.cpu_count())
-        _conn = partial(fetch_and_dump,
-                        config,
-                        max_date,
-                        record=args.rec,
-                        contracting=args.contracting)
-        params = enumerate(
-            zip_longest(key_ids, key_ids[1::], fillvalue=''),
-            1
-        )
-        pool.map(_conn, params)
-        paths = [config.get('path_can'), config.get('path_ext')]
-        pool = mp.Pool(2)
-        create_zip = partial(make_zip, '{}.zip'.format(nam))
-        pool.map(create_zip, paths)
-        create_htm = partial(create_html, ENV, config, max_date)
-        pool.map(create_htm, paths)
-        if args.s3 and bucket:
-            put_s3 = partial(put_to_s3, bucket, max_date)
-            pool.map(put_s3, paths)
-            update_index(ENV, bucket)
+        # max_date = _tenders.get_max_date().split('T')[0]
+        # print max_date
+        tenders = []
+        k = 1
+        count = 0
+        for tender in _tenders.iterview("_all_docs", 100, include_docs=True):
+            if count == 1500:
+                # import pdb
+                # pdb.set_trace()
+                count = 0
+                pack = package_tenders(tenders, modelsMap, callbacks, config['release'])
+                tenders = []
+                name = 'release-{0:07d}.json'.format(k)
+                with open(config['path_can'] + '/{}'.format(name), 'w') as stream:
+                    dump(pack, stream, indent=4)
+                print 'DUMPED'
+                k += 1
+            else:
+                count += 1
+                try:
+                    tenders.append(prepare_pached(tender.doc['tenders'], 1))
+                except KeyError:
+                    pass
+
+import jsonpatch
+def prepare_pached(tenders, version, first=True):
+    if first:
+        first_tender = tenders[0]
+        tenders = tenders[1:]
+    else:
+        first_tender = self._db.get(tenders[0].get('id'))
+    origin = first_tender.copy()
+    patches = first_tender.pop('patches', [])
+    if patches:
+        for patch in patches:
+            first_tender = jsonpatch.apply_patch(first_tender, patch)
+    for tender in tenders:
+        if not tender:
+            continue
+        patch = jsonpatch.make_patch(first_tender, tender).patch
+        if patch:
+            patches.append(patch)
+        first_tender = tender
+    origin['patches'] = patches
+    origin['version'] = version
+    origin['_id'] = origin['id']
+    return origin
+        # total = int(args.number) if args.number else 4096
+        # key_ids = fetch_ids(_tenders, total)
+        # logger.info('Fetched key doc ids')
+        # pool = mp.Pool(mp.cpu_count())
+        # _conn = partial(fetch_and_dump,
+        #                 config,
+        #                 max_date,
+        #                 record=args.rec,
+        #                 contracting=args.contracting)
+        # params = enumerate(
+        #     zip_longest(key_ids, key_ids[1::], fillvalue=''),
+        #     1
+        # )
+        # pool.map(_conn, params)
+        # paths = [config.get('path_can'), config.get('path_ext')]
+        # pool = mp.Pool(2)
+        # create_zip = partial(make_zip, '{}.zip'.format(nam))
+        # pool.map(create_zip, paths)
+        # create_htm = partial(create_html, ENV, config, max_date)
+        # pool.map(create_htm, paths)
+        # if args.s3 and bucket:
+        #     put_s3 = partial(put_to_s3, bucket, max_date)
+        #     pool.map(put_s3, paths)
+        #     update_index(ENV, bucket)

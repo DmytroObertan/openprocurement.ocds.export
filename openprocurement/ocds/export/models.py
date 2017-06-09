@@ -331,25 +331,33 @@ def release_tenders(tender, modelsMap, callbacks, prefix):
     first_release['tag'] = prepare_first_tags(first_release)
     releases = [first_release]
     for patch in patches:
-        tender = jsonpatch.apply_patch(tender, patch)
+        for op in patch:
+            try:
+                tender = jsonpatch.apply_patch(tender, [op])
+            except Exception as e:
+                op['op'] = 'add'
+                tender = jsonpatch.apply_patch(tender, [op])
         next_release = Release(tender, modelsMap, callbacks).__export__()
-        if first_release != next_release:
+        first = first_release.copy()
+        nex = next_release.copy()
+        for key in ['id', 'tag']:
+            first.pop(key, '')
+            nex.pop(key, '')
+        if first != nex:
             diff = jsonpatch.make_patch(first_release, next_release).patch
             tag = []
             for op in diff:
                 if op['path'] in ['/tag', '/id']:
                     continue
-                if op['op'] != 'add':
-                    if not any(p in op['path'] for p in ['awards', 'contracts']):
-                        tag.append('tenderUpdate')
+                for p in ['awards', 'contracts']:
+                    if op['op'] != 'add':
+                        if p in op['path']:
+                            tag.append(p[:-1] + 'Update')
                     else:
-                        for p in ['awards', 'contracts']:
-                            if p in op['path']:
-                                tag.append(p[:-1] + 'Update')
-                else:
-                    for p in ['awards', 'contracts']:
                         if p in op['path']:
                             tag.append(p[:-1])
+                if not tag:
+                    tag.append('tenderUpdate')
             next_release['tag'] = list(set(tag))
             releases.append(next_release)
         first_release = next_release
@@ -371,7 +379,7 @@ def package_tenders(tenders, modelsMap, callbacks, config):
         if not tender:
             continue
         if 'patches' in tender:
-            releases.extend(release_tenders(tender, config.get('prefix')))
+            releases.extend(release_tenders(tender, modelsMap, callbacks, config.get('prefix')))
         else:
             releases.append(release_tender(tender, modelsMap, callbacks, config.get('prefix')))
     package['releases'] = releases
